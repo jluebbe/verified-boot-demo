@@ -1,0 +1,36 @@
+From 2751a1f0a8a220d4c33b12db377530e040014c19 Mon Sep 17 00:00:00 2001
+From: Steffen Trumtrar <s.trumtrar@pengutronix.de>
+Date: Thu, 14 Feb 2013 12:44:41 +0100
+Subject: [PATCH 02/14] ARM/MXS/i.MX28: recognize watchdog reset
+
+When a watchdog timeout is set in the linux kernel, the FORCE_UPDATE bit is set.
+Use this to recognize a system reset that was triggered by the watchdog.
+Since only the wdt part of the kernel driver sets this bit, this is a safe
+distinguishing feature.
+
+Signed-off-by: Steffen Trumtrar <s.trumtrar@pengutronix.de>
+---
+ drivers/watchdog/im28wd.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/watchdog/im28wd.c b/drivers/watchdog/im28wd.c
+index 3e73ecd..a9093a7 100644
+--- a/drivers/watchdog/im28wd.c
++++ b/drivers/watchdog/im28wd.c
+@@ -176,6 +176,13 @@ static void __maybe_unused imx28_detect_reset_source(const struct imx28_wd *p)
+ 		reset_source_set(RESET_RST);
+ 		return;
+ 	}
++	reg = readl(p->regs + MXS_RTC_PERSISTENT1);
++	if (reg & MXS_RTC_PERSISTENT1_FORCE_UPDATER) {
++		writel(MXS_RTC_PERSISTENT1_FORCE_UPDATER,
++			p->regs + MXS_RTC_PERSISTENT1 + MXS_RTC_CLR_ADDR);
++		reset_source_set(RESET_WDG);
++		return;
++	}
+ 
+ 	reset_source_set(RESET_RST);
+ }
+-- 
+2.1.4
+

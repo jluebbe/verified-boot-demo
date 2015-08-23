@@ -1,0 +1,38 @@
+From 843a1e1310f936e824004e957f418feb94b96329 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ulrich=20=C3=96lmann?= <u.oelmann@pengutronix.de>
+Date: Fri, 20 Feb 2015 11:28:48 +0100
+Subject: [PATCH 01/14] default_environment_path_set
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Ulrich Ölmann <u.oelmann@pengutronix.de>
+---
+ arch/arm/boards/duckbill/board.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/arch/arm/boards/duckbill/board.c b/arch/arm/boards/duckbill/board.c
+index 3c6ab8e..11255d0 100644
+--- a/arch/arm/boards/duckbill/board.c
++++ b/arch/arm/boards/duckbill/board.c
+@@ -16,6 +16,7 @@
+ 
+ #include <common.h>
+ #include <environment.h>
++#include <envfs.h>
+ #include <errno.h>
+ #include <gpio.h>
+ #include <init.h>
+@@ -68,6 +69,9 @@ static int duckbill_devices_init(void)
+ 	add_generic_device("fsl-udc", DEVICE_ID_DYNAMIC, NULL, IMX_USB0_BASE,
+ 			   0x200, IORESOURCE_MEM, &usb_pdata);
+ 
++	/* FIXME search for partition type 0xda */
++	default_environment_path_set("/dev/disk0.1");
++
+ 	return 0;
+ }
+ fs_initcall(duckbill_devices_init);
+-- 
+2.1.4
+

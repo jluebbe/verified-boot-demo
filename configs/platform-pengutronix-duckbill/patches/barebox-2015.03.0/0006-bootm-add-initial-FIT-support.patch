@@ -1,0 +1,809 @@
+From 66f0027215fee848783b573caaa1ca11dec1f468 Mon Sep 17 00:00:00 2001
+From: Jan Luebbe <jlu@pengutronix.de>
+Date: Wed, 12 Nov 2014 17:13:09 +0100
+Subject: [PATCH 06/14] bootm: add initial FIT support
+
+This implementation is inspired by U-Boot's FIT support. Instead of
+using libfdt (which does not exist in barebox), configuration signatures
+are verified by using a simplified DT parser based on barebox's own
+code.
+
+Currently, only signed configurations with hashed images are supported,
+as the other variants are less useful for verified boot. Compatible FIT
+images can be created using U-Boot's mkimage tool.
+
+Signed-off-by: Jan Luebbe <jlu@pengutronix.de>
+---
+ arch/arm/lib/bootm.c |  74 +++++++
+ commands/Kconfig     |   8 +
+ common/Kconfig       |   7 +
+ common/Makefile      |   1 +
+ common/image-fit.c   | 585 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ include/image-fit.h  |  42 ++++
+ 6 files changed, 717 insertions(+)
+ create mode 100644 common/image-fit.c
+ create mode 100644 include/image-fit.h
+
+diff --git a/arch/arm/lib/bootm.c b/arch/arm/lib/bootm.c
+index 8327c3f..6d30c59 100644
+--- a/arch/arm/lib/bootm.c
++++ b/arch/arm/lib/bootm.c
+@@ -552,6 +552,78 @@ BAREBOX_MAGICVAR(aimage_noverwrite_bootargs, "Disable overwrite of the bootargs
+ BAREBOX_MAGICVAR(aimage_noverwrite_tags, "Disable overwrite of the tags addr with the one present in aimage");
+ #endif
+ 
++#include <image-fit.h>
++
++static int do_bootm_arm_fit(struct image_data *data)
++{
++	struct fit_handle *handle;
++	int ret;
++	unsigned long mem_free;
++	unsigned long mem_start, mem_size;
++
++	handle = fit_open(data->os_file, data->os_num, data->verbose);
++	if (!handle)
++		return -EINVAL;
++
++	ret = sdram_start_and_size(&mem_start, &mem_size);
++	if (ret)
++		return ret;
++
++	/* no support for custom load address */
++	data->os_address = mem_start + PAGE_ALIGN(handle->kernel_size * 4);
++	data->os_res = request_sdram_region("fit-kernel", data->os_address, handle->kernel_size);
++	if (!data->os_res) {
++		pr_err("Cannot request region 0x%08lx - 0x%08lx\n",
++				data->os_address, handle->kernel_size);
++		ret = -ENOMEM;
++		goto err_out;
++	}
++	memcpy((void *)data->os_res->start, handle->kernel, handle->kernel_size);
++
++	/*
++	 * Put oftree/initrd close behind compressed kernel image to avoid
++	 * placing it outside of the kernels lowmem.
++	 */
++	if (handle->initrd_size) {
++		data->initrd_address = PAGE_ALIGN(data->os_res->end + SZ_1M);
++		data->initrd_res = request_sdram_region("fit-initrd", data->initrd_address, handle->initrd_size);
++		if (!data->initrd_res) {
++			ret = -ENOMEM;
++			goto err_out;
++		}
++		memcpy((void *)data->initrd_res->start, handle->initrd, handle->initrd_size);
++	}
++
++	data->of_root_node = of_unflatten_dtb(handle->oftree);
++	if (!data->of_root_node) {
++		pr_err("unable to unflatten devicetree\n");
++		ret = -EINVAL;
++		goto err_out;
++	}
++
++	/*
++	 * Put devicetree right after initrd if present or after the kernel
++	 * if not.
++	 */
++	if (data->initrd_res)
++		mem_free = PAGE_ALIGN(data->initrd_res->end);
++	else
++		mem_free = PAGE_ALIGN(data->os_res->end + SZ_1M);
++
++	return __do_bootm_linux(data, mem_free, 0);
++
++err_out:
++	if (handle)
++		fit_close(handle);
++	return ret;
++}
++
++static struct image_handler arm_fit_handler = {
++        .name = "FIT image",
++        .bootm = do_bootm_arm_fit,
++        .filetype = filetype_oftree,
++};
++
+ static struct binfmt_hook binfmt_aimage_hook = {
+ 	.type = filetype_aimage,
+ 	.exec = "bootm",
+@@ -577,6 +649,8 @@ static int armlinux_register_image_handler(void)
+ 		register_image_handler(&aimage_handler);
+ 		binfmt_register(&binfmt_aimage_hook);
+ 	}
++	if (IS_BUILTIN(CONFIG_CMD_BOOTM_FITIMAGE))
++	        register_image_handler(&arm_fit_handler);
+ 	binfmt_register(&binfmt_arm_zimage_hook);
+ 	binfmt_register(&binfmt_barebox_hook);
+ 
+diff --git a/commands/Kconfig b/commands/Kconfig
+index e4f68e7..e7c59bb 100644
+--- a/commands/Kconfig
++++ b/commands/Kconfig
+@@ -402,6 +402,14 @@ config CMD_BOOTM_AIMAGE
+ 	help
+ 	  Support using Android Images.
+ 
++config CMD_BOOTM_FITIMAGE
++	bool
++	prompt "FIT image support"
++	select FITIMAGE
++	depends on CMD_BOOTM && ARM
++	help
++	  Support using FIT Images.
++
+ config CMD_BOOTU
+ 	tristate
+ 	default y
+diff --git a/common/Kconfig b/common/Kconfig
+index d437343..9dd0b65 100644
+--- a/common/Kconfig
++++ b/common/Kconfig
+@@ -66,6 +66,13 @@ config UIMAGE
+ 	select CRC32
+ 	bool
+ 
++config FITIMAGE
++	bool
++	select OFTREE
++	select SHA1
++	select SHA256
++	select RSA
++
+ config LOGBUF
+ 	bool
+ 
+diff --git a/common/Makefile b/common/Makefile
+index ee5dca7..a800829 100644
+--- a/common/Makefile
++++ b/common/Makefile
+@@ -44,6 +44,7 @@ obj-$(CONFIG_RESET_SOURCE)	+= reset_source.o
+ obj-$(CONFIG_SHELL_HUSH)	+= hush.o
+ obj-$(CONFIG_SHELL_SIMPLE)	+= parser.o
+ obj-$(CONFIG_UIMAGE)		+= image.o uimage.o
++obj-$(CONFIG_FITIMAGE)		+= image-fit.o
+ obj-$(CONFIG_MENUTREE)		+= menutree.o
+ obj-$(CONFIG_EFI_GUID)		+= efi-guid.o
+ obj-$(CONFIG_EFI_DEVICEPATH)	+= efi-devicepath.o
+diff --git a/common/image-fit.c b/common/image-fit.c
+new file mode 100644
+index 0000000..77df5e5
+--- /dev/null
++++ b/common/image-fit.c
+@@ -0,0 +1,585 @@
++/*
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, see <http://www.gnu.org/licenses/>.
++ *
++ * Copyright (C) Jan Lübbe, 2014
++ */
++
++#include <common.h>
++#include <init.h>
++#include <boot.h>
++#include <libfile.h>
++#include <fdt.h>
++#include <digest.h>
++#include <of.h>
++#include <fs.h>
++#include <malloc.h>
++#include <linux/ctype.h>
++#include <asm/byteorder.h>
++#include <errno.h>
++#include <linux/err.h>
++#include <stringlist.h>
++#include <rsa.h>
++#include <image-fit.h>
++
++#define FDT_MAX_DEPTH	32
++#define FDT_MAX_PATH_LEN 200
++
++#define CHECK_LEVEL_NONE 0
++#define CHECK_LEVEL_HASH 1
++#define CHECK_LEVEL_SIG 2
++#define CHECK_LEVEL_MAX 3
++
++static uint32_t dt_struct_advance(struct fdt_header *f, uint32_t dt, int size)
++{
++	dt += size;
++	dt = ALIGN(dt, 4);
++
++	if (dt > f->off_dt_struct + f->size_dt_struct)
++		return 0;
++
++	return dt;
++}
++
++static char *dt_string(struct fdt_header *f, char *strstart, uint32_t ofs)
++{
++	if (ofs > f->size_dt_strings)
++		return NULL;
++	else
++		return strstart + ofs;
++}
++
++static int of_read_string_list(struct device_node *np, const char *name, struct string_list *sl)
++{
++	struct property *prop;
++	const char *s;
++
++	of_property_for_each_string(np, name, prop, s) {
++		string_list_add(sl, s);
++	}
++
++	return prop ? 0 : -EINVAL;
++}
++
++static int fit_digest(void *fit, struct digest *digest,
++		struct string_list *inc_nodes, struct string_list *exc_props,
++		uint32_t hashed_strings_start, uint32_t hashed_strings_size)
++{
++	struct fdt_header *fdt = fit;
++	uint32_t dt_struct;
++	void *dt_strings;
++	struct fdt_header f;
++	int stack[FDT_MAX_DEPTH];
++	char path[FDT_MAX_PATH_LEN];
++	char *end;
++	uint32_t tag;
++	int start = -1;
++	int depth = -1;
++	int want = 0;
++
++	f.totalsize = fdt32_to_cpu(fdt->totalsize);
++	f.off_dt_struct = fdt32_to_cpu(fdt->off_dt_struct);
++	f.size_dt_struct = fdt32_to_cpu(fdt->size_dt_struct);
++	f.off_dt_strings = fdt32_to_cpu(fdt->off_dt_strings);
++	f.size_dt_strings = fdt32_to_cpu(fdt->size_dt_strings);
++
++	if (hashed_strings_start > f.size_dt_strings ||
++	    hashed_strings_size > f.size_dt_strings ||
++	    hashed_strings_start + hashed_strings_size > f.size_dt_strings) {
++		pr_err("%s: hashed-strings too large\n", __func__);
++		return -EINVAL;
++	}
++
++	dt_struct = f.off_dt_struct;
++	dt_strings = (void *)fdt + f.off_dt_strings;
++
++	end = path;
++	*end = '\0';
++
++	do {
++		const struct fdt_property *fdt_prop;
++		const struct fdt_node_header *fnh;
++		const char *name;
++		int include = 0;
++		int stop_at = 0;
++		int offset = dt_struct;
++		int maxlen, len;
++
++		tag = be32_to_cpu(*(uint32_t *)(fit + dt_struct));
++
++		switch (tag) {
++		case FDT_BEGIN_NODE:
++			fnh = fit + dt_struct;
++			name = fnh->name;
++			maxlen = (unsigned long)fdt + f.off_dt_struct +
++				f.size_dt_struct - (unsigned long)name;
++
++			len = strnlen(name, maxlen + 1);
++			if (len > maxlen)
++				return -ESPIPE;
++
++			dt_struct = dt_struct_advance(&f, dt_struct,
++					sizeof(struct fdt_node_header) + len + 1);
++
++			depth++;
++			if (depth == FDT_MAX_DEPTH)
++				return -ESPIPE;
++			if (end - path + 2 + len >= FDT_MAX_PATH_LEN)
++				return -ESPIPE;
++			if (end != path + 1)
++				*end++ = '/';
++			strcpy(end, name);
++			end += len;
++			stack[depth] = want;
++			if (want == 1)
++				stop_at = offset;
++			if (string_list_contains(inc_nodes, path))
++				want = 2;
++			else if (want)
++				want--;
++			else
++				stop_at = offset;
++			include = want;
++
++			break;
++
++		case FDT_END_NODE:
++			dt_struct = dt_struct_advance(&f, dt_struct, FDT_TAGSIZE);
++
++			include = want;
++			want = stack[depth--];
++			while (end > path && *--end != '/')
++				;
++			*end = '\0';
++
++			break;
++
++		case FDT_PROP:
++			fdt_prop = fit + dt_struct;
++			len = fdt32_to_cpu(fdt_prop->len);
++
++			name = dt_string(&f, dt_strings, fdt32_to_cpu(fdt_prop->nameoff));
++			if (!name)
++				return -ESPIPE;
++
++			dt_struct = dt_struct_advance(&f, dt_struct,
++					sizeof(struct fdt_property) + len);
++
++			include = want >= 2;
++			stop_at = offset;
++			if (string_list_contains(exc_props, name))
++				include = 0;
++
++			break;
++
++		case FDT_NOP:
++			dt_struct = dt_struct_advance(&f, dt_struct, FDT_TAGSIZE);
++
++			include = want >= 2;
++			stop_at = offset;
++
++			break;
++
++		case FDT_END:
++			dt_struct = dt_struct_advance(&f, dt_struct, FDT_TAGSIZE);
++
++			include = 1;
++
++			break;
++
++		default:
++			pr_err("%s: Unknown tag 0x%08X\n", __func__, tag);
++			return -EINVAL;
++		}
++
++		if (!dt_struct)
++			return -ESPIPE;
++
++		pr_debug("%s: include %d, want %d, offset 0x%x, len 0x%x\n",
++			path, include, want, offset, dt_struct-offset);
++
++		if (include && start == -1)
++			start = offset;
++
++		if (!include && start != -1) {
++			pr_debug("region: 0x%p+0x%x\n", fit+start, offset-start);
++			digest->update(digest, fit+start, offset-start);
++			start = -1;
++		}
++	} while (tag != FDT_END);
++
++	pr_debug("region: 0x%p+0x%x\n", fit+start, dt_struct-start);
++	digest->update(digest, fit+start, dt_struct-start);
++
++	pr_debug("strings: 0x%p+0x%x\n", dt_strings+hashed_strings_start, hashed_strings_size);
++	digest->update(digest, dt_strings+hashed_strings_start, hashed_strings_size);
++
++	return 0;
++}
++
++/*
++ * The consistency of the FTD structure was already checked by of_unflatten_dtb()
++ */
++static int fit_verify_signature(struct device_node *sig_node, void *fit)
++{
++	uint32_t hashed_strings_start, hashed_strings_size;
++	struct string_list inc_nodes, exc_props;
++	struct rsa_public_key key = {};
++	struct digest *digest;
++	int sig_len;
++	const char *algo_name, *key_name, *sig_value;
++	char *key_path;
++	struct device_node *key_node;
++	enum hash_algo algo;
++	void *hash;
++	int ret;
++
++	if (of_property_read_string(sig_node, "algo", &algo_name)) {
++		pr_err("algo not found\n");
++		ret = -EINVAL;
++		goto out;
++	}
++	if (strcmp(algo_name, "sha1,rsa2048") == 0) {
++		algo = HASH_ALGO_SHA1;
++	} else {
++		pr_err("unknown algo %s\n", algo_name);
++		ret = -EINVAL;
++		goto out;
++	}
++	digest = digest_get(algo);
++	if (!digest) {
++		pr_err("unsupported algo %s\n", algo_name);
++		ret = -EINVAL;
++		goto out;
++	}
++
++	sig_value = of_get_property(sig_node, "value", &sig_len);
++	if (!sig_value) {
++		pr_err("signature value not found\n");
++		ret = -EINVAL;
++		goto out;
++	}
++
++	if (of_property_read_string(sig_node, "key-name-hint", &key_name)) {
++		pr_err("key name not found\n");
++		ret = -EINVAL;
++		goto out;
++	}
++	key_path = asprintf("/signature/key-%s", key_name);
++	if (!key_name) {
++		ret = -ENOMEM;
++		goto out;
++	}
++	key_node = of_find_node_by_path(key_path);
++	free(key_path);
++	if (!key_node) {
++		pr_info("failed to find key node\n");
++		ret = -ENOENT;
++		goto out;
++	}
++
++	ret = rsa_of_read_key(key_node, &key);
++	if (ret) {
++		pr_info("failed to read key\n");
++		ret = -ENOENT;
++		goto out;
++	}
++
++	if (of_property_read_u32_index(sig_node, "hashed-strings", 0, &hashed_strings_start)) {
++		pr_err("%s: hashed-strings start not found\n", __func__);
++		ret = -EINVAL;
++		goto out;
++	}
++	if (of_property_read_u32_index(sig_node, "hashed-strings", 1, &hashed_strings_size)) {
++		pr_err("%s: hashed-strings size not found\n", __func__);
++		ret = -EINVAL;
++		goto out;
++	}
++
++	string_list_init(&inc_nodes);
++	string_list_init(&exc_props);
++
++	if (of_read_string_list(sig_node, "hashed-nodes", &inc_nodes))
++	{
++		pr_err("%s: hashed-nodes invalid\n", __func__);
++		ret = -EINVAL;
++		goto out_sl;
++	}
++
++	string_list_add(&exc_props, "data");
++
++	digest->init(digest);
++	ret = fit_digest(fit, digest, &inc_nodes, &exc_props, hashed_strings_start, hashed_strings_size);
++	hash = xzalloc(digest->length);
++	digest->final(digest, hash);
++
++	ret = rsa_verify(&key, sig_value, sig_len, hash, algo); 
++	if (ret) {
++		pr_info("sig BAD\n");
++		ret = CHECK_LEVEL_NONE;
++	} else {
++		pr_info("sig OK\n");
++		ret = CHECK_LEVEL_SIG;
++	}
++
++	free(hash);
++out_sl:
++	string_list_free(&inc_nodes);
++	string_list_free(&exc_props);
++out:
++	return ret;
++}
++
++static int fit_verify_hash(struct device_node *hash, const void *data, int data_len)
++{
++	struct digest *d;
++	const char *algo;
++	const char *value_read;
++	char *value_calc;
++	int hash_len;
++
++	value_read = of_get_property(hash, "value", &hash_len);
++	if (!value_read) {
++		pr_err("value not found\n");
++		return CHECK_LEVEL_NONE;
++	}
++
++	if (of_property_read_string(hash, "algo", &algo)) {
++		pr_err("algo not found\n");
++		return -EINVAL;
++	}
++
++	d = digest_get_by_name(algo);
++	if (!d) {
++		pr_err("unsupported algo %s\n", algo);
++		return -EINVAL;
++	}
++
++	if (hash_len != d->length) {
++		pr_err("invalid hash length %d\n", hash_len);
++		return -EINVAL;
++	}
++
++	value_calc = xmalloc(hash_len);
++	
++	d->init(d);
++	d->update(d, data, data_len);
++	d->final(d, value_calc);
++
++	if (memcmp(value_read, value_calc, hash_len)) {
++		pr_info("hash BAD\n");
++		return CHECK_LEVEL_NONE;
++	} else {
++		pr_info("hash OK\n");
++		return CHECK_LEVEL_HASH;
++	}
++}
++
++static int fit_open_image(struct fit_handle *handle, const char* unit)
++{
++	struct device_node *image = NULL, *hash;
++	const char *type = NULL, *desc;
++	const void *data;
++	int data_len;
++	int ret, level;
++
++	image = of_get_child_by_name(handle->root, "images");
++	if (!image)
++		return -ENOENT;
++
++	image = of_get_child_by_name(image, unit);
++	if (!image)
++		return -ENOENT;
++
++	if (of_property_read_string(image, "description", &desc)) {
++		pr_info("FIT image '%s' (no description)\n", unit);
++	} else {
++		pr_info("FIT image '%s': '%s'\n", unit, desc);
++	}
++
++	of_property_read_string(image, "type", &type);
++	if (!type)
++		return -EINVAL;
++
++	data = of_get_property(image, "data", &data_len);
++	if (!data) {
++		pr_err("data not found\n");
++		return -EINVAL;
++	}
++
++	level = CHECK_LEVEL_MAX;
++	for_each_child_of_node(image, hash) {
++		if (handle->verbose)
++			of_print_nodes(hash, 0);
++		ret = fit_verify_hash(hash, data, data_len);
++		if (ret < 0)
++			return ret;
++		level = min(level, ret);
++	}
++	if (level == CHECK_LEVEL_MAX) {
++		return -EINVAL;
++	}
++
++	if (level == CHECK_LEVEL_HASH) {
++		if (strcmp(type, "kernel") == 0 ||
++			strcmp(type, "kernel_noload") == 0) {
++			handle->kernel = data;
++			handle->kernel_size = data_len;
++		} else if (strcmp(type, "flat_dt") == 0) {
++			handle->oftree = data;
++			handle->oftree_size = data_len;
++		} else if (strcmp(type, "ramdisk") == 0) {
++			handle->initrd = data;
++			handle->initrd_size = data_len;
++		} else {
++			pr_info("unknown image type %s, ignoring\n", type);
++		}
++	}
++
++	return level;
++}
++
++static int fit_open_configuration(struct fit_handle *handle, int num)
++{
++	struct device_node *conf_node = NULL, *sig_node;
++	char unit_name[10];
++	const char *unit, *desc;
++	int ret, level;
++
++	conf_node = of_get_child_by_name(handle->root, "configurations");
++	if (!conf_node)
++		return -ENOENT;
++
++	if (num) {
++		snprintf(unit_name, sizeof(unit_name), "conf@%d", num);
++		unit = unit_name;
++	} else if (of_property_read_string(conf_node, "default", &unit)) {
++		unit = "conf@1";
++	}
++
++	conf_node = of_get_child_by_name(conf_node, unit);
++	if (!conf_node) {
++		pr_err("FIT configuration '%s' not found\n", unit);
++		return -ENOENT;
++	}
++
++	if (of_property_read_string(conf_node, "description", &desc)) {
++		pr_info("FIT configuration '%s' (no description)\n", unit);
++	} else {
++		pr_info("FIT configuration '%s': '%s'\n", unit, desc);
++	}
++
++	level = CHECK_LEVEL_MAX;
++	for_each_child_of_node(conf_node, sig_node) {
++		if (handle->verbose)
++			of_print_nodes(sig_node, 0);
++		ret = fit_verify_signature(sig_node, handle->fit);
++		if (ret < 0)
++			return ret;
++		level = min(level, ret);
++	}
++	if (level == CHECK_LEVEL_MAX)
++		return -EINVAL;
++
++	if (level != CHECK_LEVEL_SIG)
++		return -EINVAL;
++
++	if (of_property_read_string(conf_node, "kernel", &unit) == 0)
++		level = min(level, fit_open_image(handle, unit));
++	else
++		return -ENOENT;
++	
++	if (of_property_read_string(conf_node, "fdt", &unit) == 0)
++		level = min(level, fit_open_image(handle, unit));
++	
++	if (of_property_read_string(conf_node, "ramdisk", &unit) == 0)
++		level = min(level, fit_open_image(handle, unit));
++
++	if (level != CHECK_LEVEL_HASH)
++		return -EINVAL;
++
++	return 0;
++}
++
++struct fit_handle *fit_open(const char *filename, int num, bool verbose)
++{
++	struct fit_handle *handle = NULL;
++	const char *desc;
++
++	handle = xzalloc(sizeof(struct fit_handle));
++
++	handle->verbose = verbose;
++
++	handle->fit = read_file(filename, &handle->size);
++	if (!handle->fit) {
++		pr_err("unable to read %s: %s\n", filename, strerror(errno));
++		goto err;
++	}
++
++	handle->root = of_unflatten_dtb(handle->fit);
++	if (IS_ERR(handle->root)) {
++		goto err;
++	}
++
++	if (of_property_read_string(handle->root, "description", &desc)) {
++		pr_info("FIT '%s' (no description)\n", filename);
++	} else {
++		pr_info("FIT '%s': '%s'\n", filename, desc);
++	}
++
++	if (fit_open_configuration(handle, num))
++		goto err;
++
++	return handle;
++err:
++	if (handle->root)
++		of_delete_node(handle->root);
++	if (handle->fit)
++		free(handle->fit);
++	free(handle);
++
++	return NULL;
++}
++
++void fit_close(struct fit_handle *handle)
++{
++	if (handle->root)
++		of_delete_node(handle->root);
++	if (handle->fit)
++		free(handle->fit);
++	free(handle);
++}
++
++#ifdef CONFIG_SANDBOX
++static int do_bootm_sandbox_fit(struct image_data *data)
++{
++	struct fit_handle *handle;
++	handle = fit_open(data->os_file, data->os_num, data->verbose);
++	if (handle)
++		fit_close(handle);
++	return 0;
++}
++
++static struct image_handler sandbox_fit_handler = {
++	.name = "FIT image",
++	.bootm = do_bootm_sandbox_fit,
++	.filetype = filetype_oftree,
++};
++
++static int sandbox_fit_register(void)
++{
++	return register_image_handler(&sandbox_fit_handler);
++}
++late_initcall(sandbox_fit_register);
++#endif
++
+diff --git a/include/image-fit.h b/include/image-fit.h
+new file mode 100644
+index 0000000..bcbc859
+--- /dev/null
++++ b/include/image-fit.h
+@@ -0,0 +1,42 @@
++/*
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, see <http://www.gnu.org/licenses/>.
++ *
++ * Copyright (C) Jan Lübbe, 2014
++ */
++
++#ifndef __IMAGE_FIT_H__
++#define __IMAGE_FIT_H__
++
++#include <linux/types.h>
++
++struct fit_handle {
++	void *fit;
++	size_t size;
++
++	bool verbose;
++
++	struct device_node *root;
++
++	const void *kernel;
++	unsigned long kernel_size;
++	const void *oftree;
++	unsigned long oftree_size;
++	const void *initrd;
++	unsigned long initrd_size;
++};
++
++struct fit_handle *fit_open(const char *filename, int num, bool verbose);
++void fit_close(struct fit_handle *handle);
++
++#endif	/* __IMAGE_FIT_H__ */
+-- 
+2.1.4
+

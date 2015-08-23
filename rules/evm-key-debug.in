@@ -1,0 +1,7 @@
+## SECTION=project_specific
+
+config EVM_KEY_DEBUG
+	tristate
+	prompt "evm-key-debug"
+	help
+	  FIXME

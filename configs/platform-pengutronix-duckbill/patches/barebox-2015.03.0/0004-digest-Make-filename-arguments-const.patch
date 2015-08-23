@@ -1,0 +1,78 @@
+From 4217c39a1807b880ddbb7d4937573a1f61099e94 Mon Sep 17 00:00:00 2001
+From: Sascha Hauer <s.hauer@pengutronix.de>
+Date: Mon, 17 Nov 2014 08:20:25 +0100
+Subject: [PATCH 04/14] digest: Make filename arguments const
+
+Signed-off-by: Sascha Hauer <s.hauer@pengutronix.de>
+---
+ common/digest.c  | 8 ++++----
+ include/digest.h | 8 ++++----
+ 2 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/common/digest.c b/common/digest.c
+index 51be2ca..7187b0f 100644
+--- a/common/digest.c
++++ b/common/digest.c
+@@ -59,7 +59,7 @@ void digest_unregister(struct digest *d)
+ }
+ EXPORT_SYMBOL(digest_unregister);
+ 
+-struct digest* digest_get_by_name(char* name)
++struct digest* digest_get_by_name(const char *name)
+ {
+ 	struct digest* d;
+ 
+@@ -87,7 +87,7 @@ struct digest *digest_get(enum hash_algo algo)
+ }
+ EXPORT_SYMBOL_GPL(digest_get);
+ 
+-int digest_file_window(struct digest *d, char *filename,
++int digest_file_window(struct digest *d, const char *filename,
+ 		       unsigned char *hash,
+ 		       ulong start, ulong size)
+ {
+@@ -157,7 +157,7 @@ out:
+ }
+ EXPORT_SYMBOL_GPL(digest_file_window);
+ 
+-int digest_file(struct digest *d, char *filename,
++int digest_file(struct digest *d, const char *filename,
+ 		       unsigned char *hash)
+ {
+ 	struct stat st;
+@@ -172,7 +172,7 @@ int digest_file(struct digest *d, char *filename,
+ }
+ EXPORT_SYMBOL_GPL(digest_file);
+ 
+-int digest_file_by_name(char *algo, char *filename,
++int digest_file_by_name(char *algo, const char *filename,
+ 		       unsigned char *hash)
+ {
+ 	struct digest *d;
+diff --git a/include/digest.h b/include/digest.h
+index 62f6248..4727c72 100644
+--- a/include/digest.h
++++ b/include/digest.h
+@@ -63,15 +63,15 @@ struct digest
+ int digest_register(struct digest *d);
+ void digest_unregister(struct digest *d);
+ 
+-struct digest* digest_get_by_name(char* name);
++struct digest* digest_get_by_name(const char *name);
+ struct digest *digest_get(enum hash_algo);
+ 
+-int digest_file_window(struct digest *d, char *filename,
++int digest_file_window(struct digest *d, const char *filename,
+ 		       unsigned char *hash,
+ 		       ulong start, ulong size);
+-int digest_file(struct digest *d, char *filename,
++int digest_file(struct digest *d, const char *filename,
+ 		       unsigned char *hash);
+-int digest_file_by_name(char *algo, char *filename,
++int digest_file_by_name(char *algo, const char *filename,
+ 		       unsigned char *hash);
+ 
+ #endif /* __SH_ST_DEVICES_H__ */
+-- 
+2.1.4
+

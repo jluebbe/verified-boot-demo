@@ -1,0 +1,8 @@
+## SECTION=imx-hab
+
+config IMX_SRK_DEBUG
+	tristate
+	tristate "Generate imx-srk-debug-{fuse,table}.bin"
+	select HOST_IMX_CST
+	help
+	  FIXME

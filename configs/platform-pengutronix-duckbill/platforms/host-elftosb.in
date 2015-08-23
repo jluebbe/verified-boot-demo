@@ -1,0 +1,7 @@
+## SECTION=bootloader
+
+config HOST_ELFTOSB
+	tristate
+	prompt "elftosb"
+	help
+	  Tool to generate bootable images for the i.MX23 and i.MX28 CPU.

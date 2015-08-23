@@ -1,0 +1,19 @@
+#!/bin/sh
+
+set -x
+
+mkdir /proc
+mount -n -t proc none /proc
+
+mkdir /sys
+mount -n -t sysfs none /sys
+
+mount -n -t devtmpfs none /dev
+
+mkdir /target
+mount -n -o noatime,iversion /dev/mmcblk0p4 /target
+
+EVM_ID=$(keyctl newring _evm @u)
+evmctl import -v /etc/evm.der $EVM_ID
+
+exec switch_root /target /sbin/init

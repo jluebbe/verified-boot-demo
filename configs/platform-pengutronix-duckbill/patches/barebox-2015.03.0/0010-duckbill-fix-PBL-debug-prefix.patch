@@ -1,0 +1,40 @@
+From 1543601ed01f25d73016b4366ad17645772a1af9 Mon Sep 17 00:00:00 2001
+From: Jan Luebbe <jlu@pengutronix.de>
+Date: Tue, 17 Mar 2015 20:58:10 +0100
+Subject: [PATCH 10/14] duckbill: fix PBL debug prefix
+
+Signed-off-by: Jan Luebbe <jlu@pengutronix.de>
+---
+ arch/arm/boards/duckbill/lowlevel.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/boards/duckbill/lowlevel.c b/arch/arm/boards/duckbill/lowlevel.c
+index 77d2e83..65a810c 100644
+--- a/arch/arm/boards/duckbill/lowlevel.c
++++ b/arch/arm/boards/duckbill/lowlevel.c
+@@ -1,4 +1,4 @@
+-#define pr_fmt(fmt) "Freescale MX28evk: " fmt
++#define pr_fmt(fmt) "I2SE Duckbill: " fmt
+ #define DEBUG
+ 
+ #include <common.h>
+@@ -7,6 +7,7 @@
+ #include <asm/barebox-arm.h>
+ #include <mach/imx28-regs.h>
+ #include <mach/init.h>
++#include <mach/hab.h>
+ #include <io.h>
+ #include <debug_ll.h>
+ #include <mach/iomux.h>
+@@ -58,6 +59,8 @@ static noinline void duckbill_init(void)
+ 	mx28_mem_init();
+ 
+ 	pr_debug("DONE\n");
++
++	get_hab_status();
+ }
+ 
+ ENTRY_FUNCTION(prep_start_barebox_duckbill, r0, r1, r2)
+-- 
+2.1.4
+

@@ -1,0 +1,7 @@
+## SECTION=project_specific
+
+config HOST_IMA_EVM_UTILS
+	tristate
+	prompt "ima-evm-utils"
+	help
+	  FIXME

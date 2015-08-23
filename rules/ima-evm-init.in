@@ -1,0 +1,7 @@
+## SECTION=project_specific
+
+config IMA_EVM_INIT
+	tristate
+	prompt "ima-evm-init"
+	help
+	  FIXME

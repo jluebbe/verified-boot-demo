@@ -1,0 +1,158 @@
+From ea8897867c44aa9848d18b3839649c60bcab0bc5 Mon Sep 17 00:00:00 2001
+From: Jan Luebbe <jlu@pengutronix.de>
+Date: Wed, 18 Mar 2015 14:52:42 +0100
+Subject: [PATCH 14/14] build singed images
+
+Signed-off-by: Jan Luebbe <jlu@pengutronix.de>
+---
+ arch/arm/boards/duckbill/Makefile                  |  1 +
+ arch/arm/boards/duckbill/board.c                   |  2 ++
+ .../duckbill/defaultenv-duckbill/bin/write-srk     | 31 ++++++++++++++++++
+ arch/arm/mach-mxs/ocotp.c                          |  2 ++
+ images/Makefile.mxs                                |  2 +-
+ scripts/.gitignore                                 |  1 -
+ scripts/gencsf.sh                                  | 37 ++++++++++++++++++++++
+ 7 files changed, 74 insertions(+), 2 deletions(-)
+ create mode 100644 arch/arm/boards/duckbill/defaultenv-duckbill/bin/write-srk
+ create mode 100755 scripts/gencsf.sh
+
+diff --git a/arch/arm/boards/duckbill/Makefile b/arch/arm/boards/duckbill/Makefile
+index 01c7a25..b77e543 100644
+--- a/arch/arm/boards/duckbill/Makefile
++++ b/arch/arm/boards/duckbill/Makefile
+@@ -1,2 +1,3 @@
+ obj-y += board.o
+ lwl-y += lowlevel.o
++bbenv-y += defaultenv-duckbill
+diff --git a/arch/arm/boards/duckbill/board.c b/arch/arm/boards/duckbill/board.c
+index 2e662f9..01e5157 100644
+--- a/arch/arm/boards/duckbill/board.c
++++ b/arch/arm/boards/duckbill/board.c
+@@ -73,6 +73,8 @@ static int duckbill_devices_init(void)
+ 	/* FIXME search for partition type 0xda */
+ 	default_environment_path_set("/dev/disk0.1");
+ 
++	defaultenv_append_directory(defaultenv_duckbill);
++
+ 	return 0;
+ }
+ fs_initcall(duckbill_devices_init);
+diff --git a/arch/arm/boards/duckbill/defaultenv-duckbill/bin/write-srk b/arch/arm/boards/duckbill/defaultenv-duckbill/bin/write-srk
+new file mode 100644
+index 0000000..cf89af5
+--- /dev/null
++++ b/arch/arm/boards/duckbill/defaultenv-duckbill/bin/write-srk
+@@ -0,0 +1,31 @@
++#!/bin/sh
++
++src=/env/imx-srk-debug-fuse.bin
++dst=/dev/ocotp
++force=false
++
++while getopt "s:d:f" opt; do
++    if [ ${opt} = s ]; then
++	src=${OPTARG}
++    elif [ ${opt} = d ]; then
++	dst=${OPTARG}
++    elif [ ${opt} = f ]; then
++	force=true
++    fi
++done
++
++if [ -e "${src}" ]; then
++    # no-op
++else
++    echo "Source '${src}' not found"
++    exit 1
++fi
++
++if [ ${force} = true -a ${dst} = /dev/ocotp ]; then
++    ocotp0.permanent_write_enable=1
++fi
++
++memcpy -l -s "${src}" -d "${dst}" 0x0 0x80 0x20
++ret=$?
++ocotp0.permanent_write_enable=0
++exit $ret
+diff --git a/arch/arm/mach-mxs/ocotp.c b/arch/arm/mach-mxs/ocotp.c
+index 2029b90..4324e82 100644
+--- a/arch/arm/mach-mxs/ocotp.c
++++ b/arch/arm/mach-mxs/ocotp.c
+@@ -181,6 +181,8 @@ static int mxs_ocotp_probe(struct device_d *dev)
+ 	int err;
+ 	struct ocotp_priv *priv = xzalloc(sizeof (*priv));
+ 
++	strcpy(dev->name, "ocotp");
++
+ 	priv->base = dev_request_mem_region(dev, 0);
+ 	if (IS_ERR(priv->base))
+ 		return PTR_ERR(priv->base);
+diff --git a/images/Makefile.mxs b/images/Makefile.mxs
+index b9f6352..56ba8e1 100644
+--- a/images/Makefile.mxs
++++ b/images/Makefile.mxs
+@@ -22,7 +22,7 @@ $(obj)/%.ivt: $(obj)/%
+ # %.csf -
+ # ----------------------------------------------------------------
+ quiet_cmd_csf = CSF     $@
+-      cmd_csf = $(objtree)/scripts/gencsf $(LOAD_$(@F)) $< > $@
++      cmd_csf = sh $(srctree)/scripts/gencsf.sh $(LOAD_$(@F)) $< > $@
+ 
+ $(obj)/%.csf: $(obj)/%
+ 	$(call if_changed,csf)
+diff --git a/scripts/.gitignore b/scripts/.gitignore
+index e292196..7d5a85d 100644
+--- a/scripts/.gitignore
++++ b/scripts/.gitignore
+@@ -24,5 +24,4 @@ bareboxstate-target
+ mk-am35xx-spi-image
+ mxsimage
+ mxsboot
+-gencsf
+ ivtimage
+diff --git a/scripts/gencsf.sh b/scripts/gencsf.sh
+new file mode 100755
+index 0000000..60a60a1
+--- /dev/null
++++ b/scripts/gencsf.sh
+@@ -0,0 +1,37 @@
++#!/bin/sh
++
++load=$1
++file=$2
++
++size=$(stat -c '%s' $file)
++
++cat << EOF
++[Header]
++Version = 4.0
++Hash Algorithm = sha256
++Engine Configuration = 0
++Certificate Format = X509
++Signature Format = CMS
++
++[Install SRK]
++File = "/home/jluebbe/ptx/duckbill/platform-duckbill/build-target/imx-srk-debug-1/imx-srk-debug-table.bin"
++Source index = 0
++
++[Install CSFK]
++File = "/home/jluebbe/ptx/duckbill/local_src/hab-ca-debug/crts/CSF1_1_sha256_2048_65537_v3_usr_crt.pem"
++
++[Authenticate CSF]
++
++[Install Key]
++Verification index = 0
++Target index = 2
++File = "/home/jluebbe/ptx/duckbill/local_src/hab-ca-debug/crts/IMG1_1_sha256_2048_65537_v3_usr_crt.pem"
++
++# Sign entire power_prep image
++# Blocks have the following definition:
++# Base address of the binary file, Offset, Length of block in bytes
++[Authenticate Data]
++Verification index = 2
++Engine = DCP
++Blocks = $load 0x0 $size "$file"
++EOF
+-- 
+2.1.4
+

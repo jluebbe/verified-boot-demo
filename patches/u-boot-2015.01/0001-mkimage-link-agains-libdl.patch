@@ -1,0 +1,22 @@
+From: Jan Luebbe <jlu@pengutronix.de>
+Date: Tue, 17 Mar 2015 20:16:18 +0100
+Subject: [PATCH] mkimage: link agains libdl
+
+Signed-off-by: Jan Luebbe <jlu@pengutronix.de>
+---
+ tools/Makefile | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tools/Makefile b/tools/Makefile
+index e549f8e63c9c..2e7afce07813 100644
+--- a/tools/Makefile
++++ b/tools/Makefile
+@@ -115,7 +115,7 @@ endif
+ 
+ # MXSImage needs LibSSL
+ ifneq ($(CONFIG_MX23)$(CONFIG_MX28)$(CONFIG_FIT_SIGNATURE),)
+-HOSTLOADLIBES_mkimage += -lssl -lcrypto
++HOSTLOADLIBES_mkimage += -lssl -lcrypto -ldl
+ endif
+ 
+ HOSTLOADLIBES_dumpimage := $(HOSTLOADLIBES_mkimage)

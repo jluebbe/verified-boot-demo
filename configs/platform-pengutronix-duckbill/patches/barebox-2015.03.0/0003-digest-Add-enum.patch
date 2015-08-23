@@ -1,0 +1,133 @@
+From 722a9d1dee97dbbfd802ea691351c60cfadc6e31 Mon Sep 17 00:00:00 2001
+From: Sascha Hauer <s.hauer@pengutronix.de>
+Date: Sun, 16 Nov 2014 09:26:57 +0100
+Subject: [PATCH 03/14] digest: Add enum
+
+Signed-off-by: Sascha Hauer <s.hauer@pengutronix.de>
+---
+ common/digest.c  | 12 ++++++++++++
+ crypto/md5.c     |  1 +
+ crypto/sha1.c    |  1 +
+ crypto/sha2.c    |  2 ++
+ include/digest.h | 24 ++++++++++++++++++++++++
+ 5 files changed, 40 insertions(+)
+
+diff --git a/common/digest.c b/common/digest.c
+index ae414ba..51be2ca 100644
+--- a/common/digest.c
++++ b/common/digest.c
+@@ -75,6 +75,18 @@ struct digest* digest_get_by_name(char* name)
+ }
+ EXPORT_SYMBOL_GPL(digest_get_by_name);
+ 
++struct digest *digest_get(enum hash_algo algo)
++{
++	struct digest* d;
++
++	list_for_each_entry(d, &digests, list)
++		if (d->algo == algo)
++			return d;
++	return NULL;
++
++}
++EXPORT_SYMBOL_GPL(digest_get);
++
+ int digest_file_window(struct digest *d, char *filename,
+ 		       unsigned char *hash,
+ 		       ulong start, ulong size)
+diff --git a/crypto/md5.c b/crypto/md5.c
+index 6c4ca1d..8772833 100644
+--- a/crypto/md5.c
++++ b/crypto/md5.c
+@@ -305,6 +305,7 @@ static struct md5 m = {
+ 		.update = digest_md5_update,
+ 		.final = digest_md5_final,
+ 		.length = 16,
++		.algo = HASH_ALGO_MD5,
+ 	}
+ };
+ 
+diff --git a/crypto/sha1.c b/crypto/sha1.c
+index 58d14a8..29fcdba 100644
+--- a/crypto/sha1.c
++++ b/crypto/sha1.c
+@@ -326,6 +326,7 @@ static struct sha1 m = {
+ 		.update = digest_sha1_update,
+ 		.final = digest_sha1_final,
+ 		.length = SHA1_SUM_LEN,
++		.algo = HASH_ALGO_SHA1,
+ 	}
+ };
+ 
+diff --git a/crypto/sha2.c b/crypto/sha2.c
+index 00a1af3..72d4301 100644
+--- a/crypto/sha2.c
++++ b/crypto/sha2.c
+@@ -316,6 +316,7 @@ static struct sha2 m224 = {
+ 		.update = digest_sha2_update,
+ 		.final = digest_sha2_final,
+ 		.length = SHA224_SUM_LEN,
++		.algo = HASH_ALGO_SHA224,
+ 	}
+ };
+ #endif
+@@ -337,6 +338,7 @@ static struct sha2 m256 = {
+ 		.update = digest_sha2_update,
+ 		.final = digest_sha2_final,
+ 		.length = SHA256_SUM_LEN,
++		.algo = HASH_ALGO_SHA256,
+ 	}
+ };
+ #endif
+diff --git a/include/digest.h b/include/digest.h
+index 8563c10..62f6248 100644
+--- a/include/digest.h
++++ b/include/digest.h
+@@ -21,6 +21,27 @@
+ 
+ #include <linux/list.h>
+ 
++enum hash_algo {
++	HASH_ALGO_MD4,
++	HASH_ALGO_MD5,
++	HASH_ALGO_SHA1,
++	HASH_ALGO_RIPE_MD_160,
++	HASH_ALGO_SHA256,
++	HASH_ALGO_SHA384,
++	HASH_ALGO_SHA512,
++	HASH_ALGO_SHA224,
++	HASH_ALGO_RIPE_MD_128,
++	HASH_ALGO_RIPE_MD_256,
++	HASH_ALGO_RIPE_MD_320,
++	HASH_ALGO_WP_256,
++	HASH_ALGO_WP_384,
++	HASH_ALGO_WP_512,
++	HASH_ALGO_TGR_128,
++	HASH_ALGO_TGR_160,
++	HASH_ALGO_TGR_192,
++	HASH_ALGO__LAST
++};
++
+ struct digest
+ {
+ 	char *name;
+@@ -31,6 +52,8 @@ struct digest
+ 
+ 	unsigned int length;
+ 
++	enum hash_algo algo;
++
+ 	struct list_head list;
+ };
+ 
+@@ -41,6 +64,7 @@ int digest_register(struct digest *d);
+ void digest_unregister(struct digest *d);
+ 
+ struct digest* digest_get_by_name(char* name);
++struct digest *digest_get(enum hash_algo);
+ 
+ int digest_file_window(struct digest *d, char *filename,
+ 		       unsigned char *hash,
+-- 
+2.1.4
+

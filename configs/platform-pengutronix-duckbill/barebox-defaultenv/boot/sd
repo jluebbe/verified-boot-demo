@@ -1,0 +1,6 @@
+#!/bin/sh
+
+global bootm.image=/dev/disk0.2
+global linux.bootargs.dyn.root="console=ttyAMA0,115200 root=/dev/mmcblk0p4 rootfstype=ext4 ro rootwait"
+#global linux.bootargs.dyn.integrity="ima_appraise_tcb ima_tcb ima_appraise=fix evm=fix"
+global linux.bootargs.dyn.integrity="ima_appraise_tcb ima_tcb"

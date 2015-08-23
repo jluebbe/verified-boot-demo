@@ -1,0 +1,358 @@
+From c7491e91257a56323cfaf184b618c1af2a5f838b Mon Sep 17 00:00:00 2001
+From: Sascha Hauer <s.hauer@pengutronix.de>
+Date: Fri, 21 Nov 2014 10:25:28 +0100
+Subject: [PATCH 1/3] crypto: mxs-dcp: Add support for unique, otp and internal
+ keys
+
+Signed-off-by: Sascha Hauer <s.hauer@pengutronix.de>
+---
+ drivers/crypto/mxs-dcp.c | 232 ++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 227 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/crypto/mxs-dcp.c b/drivers/crypto/mxs-dcp.c
+index 829d639..38e9542 100644
+--- a/drivers/crypto/mxs-dcp.c
++++ b/drivers/crypto/mxs-dcp.c
+@@ -21,11 +21,14 @@
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/stmp_device.h>
++#include <linux/evm.h>
+ 
+ #include <crypto/aes.h>
+ #include <crypto/sha.h>
+ #include <crypto/internal/hash.h>
+ 
++#include <asm/unaligned.h>
++
+ #define DCP_MAX_CHANS	4
+ #define DCP_BUF_SZ	PAGE_SIZE
+ 
+@@ -87,6 +90,7 @@ struct dcp_async_ctx {
+ 	struct crypto_ablkcipher	*fallback;
+ 	unsigned int			key_len;
+ 	uint8_t				key[AES_KEYSIZE_128];
++	uint32_t			special_key;
+ };
+ 
+ struct dcp_aes_req_ctx {
+@@ -117,6 +121,9 @@ static struct dcp *global_sdcp;
+ #define MXS_DCP_CHANNELCTRL			0x20
+ #define MXS_DCP_CHANNELCTRL_ENABLE_CHANNEL_MASK	0xff
+ 
++#define MXS_DCP_CAPABILITY0			0x30
++#define MXS_DCP_CAPABILITY0_DISABLE_UNIQUE_KEY	(1 << 29)
++
+ #define MXS_DCP_CAPABILITY1			0x40
+ #define MXS_DCP_CAPABILITY1_SHA256		(4 << 16)
+ #define MXS_DCP_CAPABILITY1_SHA1		(1 << 16)
+@@ -124,6 +131,9 @@ static struct dcp *global_sdcp;
+ 
+ #define MXS_DCP_CONTEXT				0x50
+ 
++#define MXS_DCP_KEY				0x60
++#define MXS_DCP_KEYDATA				0x70
++
+ #define MXS_DCP_CH_N_CMDPTR(n)			(0x100 + ((n) * 0x40))
+ 
+ #define MXS_DCP_CH_N_SEMA(n)			(0x110 + ((n) * 0x40))
+@@ -135,6 +145,7 @@ static struct dcp *global_sdcp;
+ #define MXS_DCP_CONTROL0_HASH_TERM		(1 << 13)
+ #define MXS_DCP_CONTROL0_HASH_INIT		(1 << 12)
+ #define MXS_DCP_CONTROL0_PAYLOAD_KEY		(1 << 11)
++#define MXS_DCP_CONTROL0_OTP_KEY		(1 << 10)
+ #define MXS_DCP_CONTROL0_CIPHER_ENCRYPT		(1 << 8)
+ #define MXS_DCP_CONTROL0_CIPHER_INIT		(1 << 9)
+ #define MXS_DCP_CONTROL0_ENABLE_HASH		(1 << 6)
+@@ -214,8 +225,14 @@ static int mxs_dcp_run_aes(struct dcp_async_ctx *actx,
+ 		    MXS_DCP_CONTROL0_INTERRUPT |
+ 		    MXS_DCP_CONTROL0_ENABLE_CIPHER;
+ 
+-	/* Payload contains the key. */
+-	desc->control0 |= MXS_DCP_CONTROL0_PAYLOAD_KEY;
++	if (actx->special_key < 0x100) {
++		dev_info(sdcp->dev, "-> using special key 0x%02x\n", actx->special_key);
++		if (actx->special_key == 0xff)
++			desc->control0 |= MXS_DCP_CONTROL0_OTP_KEY;
++	} else {
++		/* Payload contains the key. */
++		desc->control0 |= MXS_DCP_CONTROL0_PAYLOAD_KEY;
++	}
+ 
+ 	if (rctx->enc)
+ 		desc->control0 |= MXS_DCP_CONTROL0_CIPHER_ENCRYPT;
+@@ -229,6 +246,9 @@ static int mxs_dcp_run_aes(struct dcp_async_ctx *actx,
+ 	else
+ 		desc->control1 |= MXS_DCP_CONTROL1_CIPHER_MODE_CBC;
+ 
++	if (actx->special_key < 0x100)
++		desc->control1 |= actx->special_key << 8;
++
+ 	desc->next_cmd_addr = 0;
+ 	desc->source = src_phys;
+ 	desc->destination = dst_phys;
+@@ -271,15 +291,21 @@ static int mxs_dcp_aes_block_crypt(struct crypto_async_request *arq)
+ 	int split = 0;
+ 	unsigned int i, len, clen, rem = 0;
+ 	int init = 0;
++	int offset;
+ 
+ 	actx->fill = 0;
+ 
+ 	/* Copy the key from the temporary location. */
+-	memcpy(key, actx->key, actx->key_len);
++	if (actx->special_key > 0x100) {
++		memcpy(key, actx->key, actx->key_len);
++		offset = AES_KEYSIZE_128;
++	} else {
++		offset = 0;
++	}
+ 
+ 	if (!rctx->ecb) {
+ 		/* Copy the CBC IV just past the key. */
+-		memcpy(key + AES_KEYSIZE_128, req->info, AES_KEYSIZE_128);
++		memcpy(key + offset, req->info, AES_KEYSIZE_128);
+ 		/* CBC needs the INIT set. */
+ 		init = 1;
+ 	} else {
+@@ -400,7 +426,7 @@ static int mxs_dcp_aes_enqueue(struct ablkcipher_request *req, int enc, int ecb)
+ 	struct dcp_aes_req_ctx *rctx = ablkcipher_request_ctx(req);
+ 	int ret;
+ 
+-	if (unlikely(actx->key_len != AES_KEYSIZE_128))
++	if (unlikely(actx->key_len != AES_KEYSIZE_128) && actx->special_key > 0xff)
+ 		return mxs_dcp_block_fallback(req, enc);
+ 
+ 	rctx->enc = enc;
+@@ -436,11 +462,77 @@ static int mxs_dcp_aes_cbc_encrypt(struct ablkcipher_request *req)
+ 	return mxs_dcp_aes_enqueue(req, 1, 0);
+ }
+ 
++static int mxs_dcp_special_key(struct dcp_async_ctx *actx, const char *str, int len)
++{
++	struct dcp *sdcp = global_sdcp;
++	const char *setkey;
++	char unique_name[] = "unique";
++	char otp_name[] = "otp";
++	char internal0_name[] = "internal0";
++	char internal1_name[] = "internal1";
++	char internal2_name[] = "internal2";
++	char internal3_name[] = "internal3";
++	unsigned char key;
++
++	if (!strncmp(str, unique_name, sizeof(unique_name) - 1))
++		key = 0xfe;
++	else if (!strncmp(str, otp_name, sizeof(otp_name) - 1))
++		key = 0xff;
++	else if (!strncmp(str, internal0_name, sizeof(internal0_name) - 1))
++		key = 0x00;
++	else if (!strncmp(str, internal1_name, sizeof(internal1_name) - 1))
++		key = 0x01;
++	else if (!strncmp(str, internal2_name, sizeof(internal2_name) - 1))
++		key = 0x02;
++	else if (!strncmp(str, internal3_name, sizeof(internal3_name) - 1))
++		key = 0x03;
++	else
++		return -EINVAL;
++
++	setkey = strchr(str, ':');
++	if (setkey) {
++		int i;
++
++		setkey++;
++
++		if (key == 0xfe || key == 0xff) {
++			dev_err(sdcp->dev, "Cannot set unique or otp key\n");
++			return -EINVAL;
++		}
++
++		if (len - (setkey - str) != AES_KEYSIZE_128) {
++			dev_err(sdcp->dev, "invalid key length %d\n", len - (setkey - str));
++			return -EINVAL;
++		}
++
++		writel(key << 4, sdcp->base + MXS_DCP_KEY);
++
++		for (i = 0; i < 4; i++) {
++			u32 keyval = get_unaligned_le32(setkey);
++			writel(keyval, sdcp->base + MXS_DCP_KEYDATA);
++			setkey += 4;
++		}
++
++		dev_info(sdcp->dev, "set special key 0x%02x\n", key);
++	}
++
++	if (key == 0xfe && (readl(sdcp->base + MXS_DCP_CAPABILITY0) &
++				MXS_DCP_CAPABILITY0_DISABLE_UNIQUE_KEY)) {
++		dev_err(sdcp->dev, "unique key is disabled\n");
++		return -EINVAL;
++	}
++
++	actx->special_key = key;
++
++	return 0;
++}
++
+ static int mxs_dcp_aes_setkey(struct crypto_ablkcipher *tfm, const u8 *key,
+ 			      unsigned int len)
+ {
+ 	struct dcp_async_ctx *actx = crypto_ablkcipher_ctx(tfm);
+ 	unsigned int ret;
++	char keyword[] = "key:";
+ 
+ 	/*
+ 	 * AES 128 is supposed by the hardware, store key into temporary
+@@ -448,6 +540,15 @@ static int mxs_dcp_aes_setkey(struct crypto_ablkcipher *tfm, const u8 *key,
+ 	 * there can still be an operation in progress.
+ 	 */
+ 	actx->key_len = len;
++
++	if (!strncmp(key, keyword, sizeof(keyword) - 1)) {
++		memset(actx->key, 0, 16);
++		return mxs_dcp_special_key(actx, key + sizeof(keyword) - 1,
++				len - sizeof(keyword) + 1);
++	} else {
++		actx->special_key = 0xfff;
++	}
++
+ 	if (len == AES_KEYSIZE_128) {
+ 		memcpy(actx->key, key, len);
+ 		return 0;
+@@ -897,6 +998,125 @@ static irqreturn_t mxs_dcp_irq(int irq, void *context)
+ 	return IRQ_HANDLED;
+ }
+ 
++static void evm_key_encrypt_complete(struct crypto_async_request *req, int err)
++{
++	struct completion *completion = req->data;
++
++	complete(completion);
++}
++
++static void mxs_dcp_disable_unique_key(struct dcp *sdcp)
++{
++	u32 val;
++
++	val = readl(sdcp->base + MXS_DCP_CAPABILITY0);
++	val |= MXS_DCP_CAPABILITY0_DISABLE_UNIQUE_KEY;
++	writel(val, sdcp->base + MXS_DCP_CAPABILITY0);
++}
++
++static int mxs_dcp_init_evm(struct dcp *sdcp)
++{
++	struct device *dev = sdcp->dev;
++	struct scatterlist sg_in[1];
++	struct scatterlist sg_out[1];
++	struct crypto_ablkcipher *tfm = NULL;
++	u8 encrypted_data[AES_BLOCK_SIZE] = {};
++	u8 key[] = "key:unique";
++	char ablkcipher_alg[] = "cbc(aes)";
++	int ret;
++	struct ablkcipher_request *req = NULL;
++	unsigned char iv[AES_BLOCK_SIZE] = "\x3d\xaf\xba\x42\x9d\x9e\xb4\x30"
++		       "\xb4\x22\xda\x80\x2c\x9f\xac\x41";
++	struct completion completion;
++	static unsigned int ivsize;
++	static int blksize;
++	const char *instr;
++	int size;
++
++	instr = of_get_property(dev->of_node, "linux,evmkey", &size);
++	if (!instr)
++		return 0;
++
++	if (size != AES_BLOCK_SIZE) {
++		ret = -EINVAL;
++		goto out;
++	}
++
++	init_completion(&completion);
++
++	tfm = crypto_alloc_ablkcipher(ablkcipher_alg, 0, 0);
++	if (IS_ERR(tfm)) {
++		pr_err("encrypted_key: failed to load %s transform (%ld)\n",
++		       ablkcipher_alg, PTR_ERR(tfm));
++		ret = PTR_ERR(tfm);
++		goto out;
++	}
++
++	ivsize = crypto_ablkcipher_ivsize(tfm);
++	blksize = crypto_ablkcipher_blocksize(tfm);
++
++	crypto_ablkcipher_clear_flags(tfm, ~0);
++
++	ret = crypto_ablkcipher_setkey(tfm, key, sizeof(key) - 1);
++	if (ret < 0) {
++		pr_err("encrypted_key: failed to setkey (%d)\n", ret);
++		goto out;
++	}
++
++	req = ablkcipher_request_alloc(tfm, GFP_KERNEL);
++	if (!req) {
++		pr_err("tcrypt: skcipher: Failed to allocate request for %s\n",
++				ablkcipher_alg);
++		ret = -EINVAL;
++		goto out;
++	}
++
++	ablkcipher_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG,
++			evm_key_encrypt_complete, &completion);
++
++	sg_init_table(sg_in, 1);
++	sg_set_buf(&sg_in[0], instr, AES_BLOCK_SIZE);
++
++	sg_init_table(sg_out, 1);
++	sg_set_buf(sg_out, encrypted_data, AES_BLOCK_SIZE);
++
++	ablkcipher_request_set_crypt(req, sg_in, sg_out, AES_BLOCK_SIZE, iv);
++
++	ret = crypto_ablkcipher_encrypt(req);
++	if (ret && ret != -EINPROGRESS) {
++		pr_err("encrypted_key: failed to encrypt (%d)\n", ret);
++		goto out;
++	}
++
++	ret = wait_for_completion_interruptible(&completion);
++        if (ret) {
++		pr_err("failed to wait\n");
++		goto out;
++	}
++
++	ret = evm_init(encrypted_data, AES_BLOCK_SIZE);
++
++	print_hex_dump(KERN_INFO, "", DUMP_PREFIX_NONE, AES_BLOCK_SIZE,
++			1, encrypted_data, AES_BLOCK_SIZE, 0);
++
++	memset(encrypted_data, 0, AES_BLOCK_SIZE);
++
++out:
++	if (ret)
++		ablkcipher_request_free(req);
++
++	if (tfm)
++		crypto_free_ablkcipher(tfm);
++
++	if (ret && of_property_read_bool(dev->of_node, "linux,require-evm"))
++		panic("Cannot initialize EVM");
++
++	if (of_property_read_bool(dev->of_node, "linux,disable-unique-key"))
++		mxs_dcp_disable_unique_key(sdcp);
++
++	return ret;
++}
++
+ static int mxs_dcp_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+@@ -1036,6 +1256,8 @@ static int mxs_dcp_probe(struct platform_device *pdev)
+ 		}
+ 	}
+ 
++	mxs_dcp_init_evm(sdcp);
++
+ 	return 0;
+ 
+ err_unregister_sha1:
+-- 
+2.1.4
+

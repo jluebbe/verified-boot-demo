@@ -1,0 +1,14 @@
+0001-default_environment_path_set.patch
+0002-ARM-MXS-i.MX28-recognize-watchdog-reset.patch
+0003-digest-Add-enum.patch
+0004-digest-Make-filename-arguments-const.patch
+0005-crypto-add-RSA-support.patch
+0006-bootm-add-initial-FIT-support.patch
+0007-ARM-MXS-add-hab-code.patch
+0008-ARM-MXS-Add-HAB-support.patch
+0009-Revert-ARM-MXS-Add-HAB-support.patch
+0010-duckbill-fix-PBL-debug-prefix.patch
+0011-duckbill-add-debug-FIT-public-key.patch
+0012-duckbill-print-HAB-events.patch
+0013-Revert-Revert-ARM-MXS-Add-HAB-support.patch
+0014-build-singed-images.patch

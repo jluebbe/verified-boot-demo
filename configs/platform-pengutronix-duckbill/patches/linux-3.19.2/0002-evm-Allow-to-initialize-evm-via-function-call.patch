@@ -1,0 +1,59 @@
+From 4d97d7438d5f52133ccb2cdd1d2384c4fe6b76e0 Mon Sep 17 00:00:00 2001
+From: Sascha Hauer <s.hauer@pengutronix.de>
+Date: Mon, 24 Nov 2014 10:12:19 +0100
+Subject: [PATCH 2/3] evm: Allow to initialize evm via function call
+
+Signed-off-by: Sascha Hauer <s.hauer@pengutronix.de>
+---
+ include/linux/evm.h                 |  6 ++++++
+ security/integrity/evm/evm_crypto.c | 14 ++++++++++++++
+ 2 files changed, 20 insertions(+)
+
+diff --git a/include/linux/evm.h b/include/linux/evm.h
+index 1fcb88c..0e525ac 100644
+--- a/include/linux/evm.h
++++ b/include/linux/evm.h
+@@ -33,6 +33,7 @@ extern void evm_inode_post_removexattr(struct dentry *dentry,
+ extern int evm_inode_init_security(struct inode *inode,
+ 				   const struct xattr *xattr_array,
+ 				   struct xattr *evm);
++extern int evm_init(const char *key, int keylen);
+ #ifdef CONFIG_FS_POSIX_ACL
+ extern int posix_xattr_acl(const char *xattrname);
+ #else
+@@ -96,5 +97,10 @@ static inline int evm_inode_init_security(struct inode *inode,
+ 	return 0;
+ }
+ 
++static inline int evm_init(const char *key, int keylen)
++{
++	return -ENOSYS;
++}
++
+ #endif /* CONFIG_EVM */
+ #endif /* LINUX_EVM_H */
+diff --git a/security/integrity/evm/evm_crypto.c b/security/integrity/evm/evm_crypto.c
+index 5e9687f..f9cda05 100644
+--- a/security/integrity/evm/evm_crypto.c
++++ b/security/integrity/evm/evm_crypto.c
+@@ -260,3 +260,17 @@ out:
+ 	key_put(evm_key);
+ 	return rc;
+ }
++
++int evm_init(const char *key, int keylen)
++{
++	if (keylen > MAX_KEY_SIZE)
++		return -EINVAL;
++
++	memcpy(evmkey, key, keylen);
++
++	evm_initialized = 1;
++
++	pr_info("initialized\n");
++
++	return 0;
++}
+-- 
+2.1.4
+

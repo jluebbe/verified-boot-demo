@@ -1,0 +1,434 @@
+From 0f58004a51ea2f4dda9ee49fbb4ff4a7db431c65 Mon Sep 17 00:00:00 2001
+From: Jan Luebbe <jlu@pengutronix.de>
+Date: Tue, 17 Mar 2015 20:21:54 +0100
+Subject: [PATCH 09/14] Revert "ARM: MXS: Add HAB support"
+
+This reverts commit e334ca7001c8df4b3058168ab9788584948337b7.
+---
+ arch/arm/boards/duckbill/board.c     |   3 -
+ arch/arm/boards/duckbill/lowlevel.c  |   3 -
+ arch/arm/mach-mxs/Makefile           |   1 -
+ arch/arm/mach-mxs/include/mach/hab.h |   2 -
+ arch/arm/mach-mxs/mxs28img.cfg       |  10 +--
+ images/.gitignore                    |   3 -
+ images/Makefile                      |  11 +--
+ images/Makefile.mxs                  |  35 +--------
+ scripts/.gitignore                   |   2 -
+ scripts/Makefile                     |   2 +-
+ scripts/ivtimage.c                   | 140 -----------------------------------
+ scripts/mxsimage.c                   |  14 +---
+ 12 files changed, 12 insertions(+), 214 deletions(-)
+ delete mode 100644 scripts/ivtimage.c
+
+diff --git a/arch/arm/boards/duckbill/board.c b/arch/arm/boards/duckbill/board.c
+index 2e662f9..11255d0 100644
+--- a/arch/arm/boards/duckbill/board.c
++++ b/arch/arm/boards/duckbill/board.c
+@@ -24,7 +24,6 @@
+ #include <net.h>
+ 
+ #include <mach/clock.h>
+-#include <mach/hab.h>
+ #include <mach/imx-regs.h>
+ #include <mach/iomux-imx28.h>
+ #include <mach/iomux.h>
+@@ -82,8 +81,6 @@ static int duckbill_console_init(void)
+ 	barebox_set_model("I2SE Duckbill");
+ 	barebox_set_hostname("duckbill");
+ 
+-	get_hab_status();
+-
+ 	return 0;
+ }
+ console_initcall(duckbill_console_init);
+diff --git a/arch/arm/boards/duckbill/lowlevel.c b/arch/arm/boards/duckbill/lowlevel.c
+index 91bff3a..77d2e83 100644
+--- a/arch/arm/boards/duckbill/lowlevel.c
++++ b/arch/arm/boards/duckbill/lowlevel.c
+@@ -7,7 +7,6 @@
+ #include <asm/barebox-arm.h>
+ #include <mach/imx28-regs.h>
+ #include <mach/init.h>
+-#include <mach/hab.h>
+ #include <io.h>
+ #include <debug_ll.h>
+ #include <mach/iomux.h>
+@@ -59,8 +58,6 @@ static noinline void duckbill_init(void)
+ 	mx28_mem_init();
+ 
+ 	pr_debug("DONE\n");
+-
+-	get_hab_status();
+ }
+ 
+ ENTRY_FUNCTION(prep_start_barebox_duckbill, r0, r1, r2)
+diff --git a/arch/arm/mach-mxs/Makefile b/arch/arm/mach-mxs/Makefile
+index bd9976d..8064be5 100644
+--- a/arch/arm/mach-mxs/Makefile
++++ b/arch/arm/mach-mxs/Makefile
+@@ -6,4 +6,3 @@ obj-$(CONFIG_MXS_OCOTP) += ocotp.o
+ obj-$(CONFIG_MXS_CMD_BCB) += bcb.o
+ pbl-y += power-init.o mem-init.o lradc-init.o
+ obj-$(CONFIG_MXS_HAB) += hab.o
+-pbl-$(CONFIG_MXS_HAB) += hab.o
+diff --git a/arch/arm/mach-mxs/include/mach/hab.h b/arch/arm/mach-mxs/include/mach/hab.h
+index 8da295b..3b9f3b3 100644
+--- a/arch/arm/mach-mxs/include/mach/hab.h
++++ b/arch/arm/mach-mxs/include/mach/hab.h
+@@ -14,8 +14,6 @@
+ #ifndef __HAB_H
+ #define __HAB_H
+ 
+-void get_hab_status(void);
+-
+ /*
+  * Header field components
+  * @ingroup hdr
+diff --git a/arch/arm/mach-mxs/mxs28img.cfg b/arch/arm/mach-mxs/mxs28img.cfg
+index e94f086..0ff2c35 100644
+--- a/arch/arm/mach-mxs/mxs28img.cfg
++++ b/arch/arm/mach-mxs/mxs28img.cfg
+@@ -1,8 +1,8 @@
+ SECTION 0x0 BOOTABLE
+  TAG LAST
+- LOAD     0x10     @PREP@
+- LOAD     0x8000   @PREP_SIG@
+- CALL HAB 0x10     0x0
++ LOAD     0x1000     @PREP@
++ LOAD IVT 0x8000     0x1000
++ CALL HAB 0x8000     0x0
+  LOAD     0x40002000 @BOOTLOADER@
+- LOAD     0x40100000 @BOOTLOADER_SIG@
+- CALL HAB 0x40002000 0x0
++ LOAD IVT 0x8000     0x40002000
++ CALL HAB 0x8000     0x0
+diff --git a/images/.gitignore b/images/.gitignore
+index 753c9a9..c5377d9 100644
+--- a/images/.gitignore
++++ b/images/.gitignore
+@@ -18,9 +18,6 @@
+ *.mlospi
+ *.mxsbs
+ *.mxssd
+-*.csf
+-*.ivt
+-*.sig
+ pbl.lds
+ barebox.x
+ barebox.z
+diff --git a/images/Makefile b/images/Makefile
+index 4de5358..7c3aaf7 100644
+--- a/images/Makefile
++++ b/images/Makefile
+@@ -45,7 +45,7 @@
+ #
+ 
+ quiet_cmd_objcopy_bin = OBJCOPYB $@
+-      cmd_objcopy_bin = $(OBJCOPY) -O binary --gap-fill 0xff $(OBJCOPYFLAGS) $(OBJCOPYFLAGS_$(@F)) $< $@
++      cmd_objcopy_bin = $(OBJCOPY) -O binary $(OBJCOPYFLAGS) $(OBJCOPYFLAGS_$(@F)) $< $@
+ 
+ pbl-lds := $(obj)/pbl.lds
+ extra-y += $(pbl-lds)
+@@ -110,12 +110,6 @@ targets += $(patsubst %,%.pblx,$(pblx-y))
+ targets += $(patsubst %,%.pblb,$(pblx-y))
+ targets += $(patsubst %,%.pbl,$(pblx-y))
+ targets += $(patsubst %,%.s,$(pblx-y))
+-targets += $(patsubst %,%.pblb.ivt,$(pblx-y))
+-targets += $(patsubst %,%.pblx.ivt,$(pblx-y))
+-targets += $(patsubst %,%.pblb.ivt.sig,$(pblx-y))
+-targets += $(patsubst %,%.pblx.ivt.sig,$(pblx-y))
+-targets += $(patsubst %,%.pblb.ivt.csf,$(pblx-y))
+-targets += $(patsubst %,%.pblx.ivt.csf,$(pblx-y))
+ targets += $(foreach m, $(image-y), $(FILE_$(m)))
+ 
+ SECONDARY: $(addprefix $(obj)/,$(targets))
+@@ -126,6 +120,5 @@ images: $(addprefix $(obj)/, $(image-y)) FORCE
+ 
+ clean-files := *.pbl *.pblb *.pblx *.map start_*.imximg *.img barebox.z start_*.kwbimg \
+ 	start_*.kwbuartimg *.socfpgaimg *.mlo *.t20img *.t20img.cfg *.t30img \
+-	*.t30img.cfg *.t124img *.t124img.cfg *.mlospi *.mlo *.mxsbs *.mxssd \
+-	*.ivt *.sig *csf
++	*.t30img.cfg *.t124img *.t124img.cfg *.mlospi *.mlo *.mxsbs *.mxssd
+ clean-files += pbl.lds
+diff --git a/images/Makefile.mxs b/images/Makefile.mxs
+index b9f6352..733f83b 100644
+--- a/images/Makefile.mxs
++++ b/images/Makefile.mxs
+@@ -5,42 +5,17 @@
+ # %.mxsbs - convert into MXS BootStream image
+ # ----------------------------------------------------------------
+ quiet_cmd_mxs_bootstream = MXS-BOOTSTREAM $@
+-      cmd_mxs_bootstream = $(objtree)/scripts/mxsimage -c $(CFG_$(@F)) -b $< -o $@ \
+-			   -p $(word 2,$^) -s $(word 3,$^) -t $(word 4,$^)
++      cmd_mxs_bootstream = $(objtree)/scripts/mxsimage -c $(CFG_$(@F)) -b $< -o $@ -p $(word 2,$^)
+ 
+-$(obj)/%.mxsbs: $(obj)/%.pblx.ivt $(obj)/prep_%.pblb.ivt $(obj)/prep_%.pblb.ivt.sig $(obj)/%.pblx.ivt.sig FORCE
++$(obj)/%.mxsbs: $(obj)/%.pblx $(obj)/prep_%.pblb FORCE
+ 	$(call if_changed,mxs_bootstream)
+ 
+-# %.ivt - Add IVT header to image
+-# ----------------------------------------------------------------
+-quiet_cmd_ivt = IVT     $@
+-      cmd_ivt = $(objtree)/scripts/ivtimage -o $@ -l $(LOAD_$(@F)) $<
+-
+-$(obj)/%.ivt: $(obj)/%
+-	$(call if_changed,ivt)
+-
+-# %.csf -
+-# ----------------------------------------------------------------
+-quiet_cmd_csf = CSF     $@
+-      cmd_csf = $(objtree)/scripts/gencsf $(LOAD_$(@F)) $< > $@
+-
+-$(obj)/%.csf: $(obj)/%
+-	$(call if_changed,csf)
+-
+-# %.sig - Add IVT header to image
+-# ----------------------------------------------------------------
+-quiet_cmd_sig = SIG     $@
+-      cmd_sig = cst -o $@ < $(word 2,$^)
+-
+-$(obj)/%.sig: $(obj)/% $(obj)/%.csf
+-	$(call if_changed,sig)
+-
+ # %.mxssd - convert into MXS SD card image
+ # ----------------------------------------------------------------
+ quiet_cmd_mxs_sd = MXS-SD $@
+       cmd_mxs_sd = $(objtree)/scripts/mxsboot sd $< $@
+ 
+-$(obj)/%.mxssd: $(obj)/% FORCE
++$(obj)/%.mxssd: $(obj)/%
+ 	$(call if_changed,mxs_sd)
+ 
+ board = $(srctree)/arch/$(ARCH)/boards
+@@ -48,10 +23,6 @@ mxs23cfg = $(srctree)/arch/arm/mach-mxs/mxs23img.cfg
+ mxs28cfg = $(srctree)/arch/arm/mach-mxs/mxs28img.cfg
+ 
+ pblx-$(CONFIG_MACH_DUCKBILL) += start_barebox_duckbill prep_start_barebox_duckbill
+-LOAD_prep_start_barebox_duckbill.pblb.ivt=0x10
+-LOAD_start_barebox_duckbill.pblx.ivt=0x40002000
+-LOAD_prep_start_barebox_duckbill.pblb.ivt.csf=0x10
+-LOAD_start_barebox_duckbill.pblx.ivt.csf=0x40002000
+ PREP_start_barebox_duckbill.pblx.mxsbs = start_barebox_duckbill_prep
+ CFG_start_barebox_duckbill.mxsbs = $(mxs28cfg)
+ FILE_barebox-duckbill-bootstream.img = start_barebox_duckbill.mxsbs
+diff --git a/scripts/.gitignore b/scripts/.gitignore
+index e292196..6203589 100644
+--- a/scripts/.gitignore
++++ b/scripts/.gitignore
+@@ -24,5 +24,3 @@ bareboxstate-target
+ mk-am35xx-spi-image
+ mxsimage
+ mxsboot
+-gencsf
+-ivtimage
+diff --git a/scripts/Makefile b/scripts/Makefile
+index 7865d46..74c2213 100644
+--- a/scripts/Makefile
++++ b/scripts/Makefile
+@@ -19,7 +19,7 @@ hostprogs-$(CONFIG_ARCH_S5PCxx)  += s5p_cksum
+ hostprogs-$(CONFIG_ARCH_DAVINCI) += mkublheader
+ hostprogs-$(CONFIG_ARCH_ZYNQ)	 += zynq_mkimage
+ hostprogs-$(CONFIG_ARCH_SOCFPGA) += socfpga_mkimage
+-hostprogs-$(CONFIG_ARCH_MXS)     += mxsimage mxsboot ivtimage
++hostprogs-$(CONFIG_ARCH_MXS)     += mxsimage mxsboot
+ HOSTLOADLIBES_mxsimage  = `pkg-config --libs openssl`
+ HOSTCFLAGS_mxs-usb-loader.o = `pkg-config --cflags libusb-1.0`
+ HOSTLOADLIBES_mxs-usb-loader  = `pkg-config --libs libusb-1.0`
+diff --git a/scripts/ivtimage.c b/scripts/ivtimage.c
+deleted file mode 100644
+index a980e0d..0000000
+--- a/scripts/ivtimage.c
++++ /dev/null
+@@ -1,140 +0,0 @@
+-#include <stdio.h>
+-#include <unistd.h>
+-#include <getopt.h>
+-#include <stdlib.h>
+-#include <stdint.h>
+-#include <string.h>
+-#include <errno.h>
+-#include <sys/types.h>
+-#include <sys/stat.h>
+-#include <fcntl.h>
+-#include <endian.h>
+-
+-struct sb_ivt_header_size {
+-	uint32_t	header;
+-	uint32_t	entry;
+-	uint32_t	reserved1;
+-	uint32_t	dcd;
+-	uint32_t	boot_data;
+-	uint32_t	self;
+-	uint32_t	csf;
+-	uint32_t	reserved2;
+-	uint32_t	imagesize;
+-	uint32_t	padding[3];
+-};
+-
+-static int read_full(int fd, void *buf, size_t size)
+-{
+-	size_t insize = size;
+-	int now;
+-	int total = 0;
+-
+-	while (size) {
+-		now = read(fd, buf, size);
+-		if (now == 0)
+-			return total;
+-		if (now < 0)
+-			return now;
+-		total += now;
+-		size -= now;
+-		buf += now;
+-	}
+-
+-	return insize;
+-}
+-
+-static int write_full(int fd, void *buf, size_t size)
+-{
+-	size_t insize = size;
+-	int now;
+-
+-	while (size) {
+-		now = write(fd, buf, size);
+-		if (now <= 0)
+-			return now;
+-		size -= now;
+-		buf += now;
+-	}
+-
+-	return insize;
+-}
+-
+-int main(int argc, char *argv[])
+-{
+-	int opt, ret;
+-	const char *outfile = NULL, *infile;
+-	struct stat s;
+-	void *buf;
+-	int fd;
+-	uint32_t loadaddr = 80;
+-	int addsize = 0;
+-	struct sb_ivt_header_size *ivt;
+-
+-	while ((opt = getopt(argc, argv, "o:l:")) != -1) {
+-		switch (opt) {
+-		case 'l':
+-			loadaddr = strtoul(optarg, NULL, 0);
+-			break;
+-		case 'o':
+-			outfile = optarg;
+-			break;
+-		default:
+-			exit(1);
+-		}
+-	}
+-
+-	if (optind == argc)
+-		exit(1);
+-
+-	infile = argv[optind];
+-
+-	ret = stat(infile, &s);
+-	if (ret) {
+-		perror("stat");
+-		exit(1);
+-	}
+-
+-	fd = open(infile, O_RDONLY);
+-	if (fd < 0) {
+-		perror("open infile");
+-		exit(1);
+-	}
+-
+-	addsize = sizeof(struct sb_ivt_header_size);
+-
+-	buf = calloc(addsize + s.st_size, 1);
+-	if (!buf) {
+-		perror("malloc");
+-		exit(1);
+-	}
+-
+-	ivt = buf;
+-
+-	ret = read_full(fd, buf + addsize, s.st_size);
+-	if (ret < 0) {
+-		perror("read infile");
+-		exit(1);
+-	}
+-
+-	close(fd);
+-
+-	ivt->header = 0x402000d1;
+-	ivt->entry = loadaddr + sizeof(*ivt);
+-	ivt->self = loadaddr;
+-	ivt->csf = loadaddr >= 0x40000000 ? 0x40100000 : 0x8000;
+-	ivt->imagesize = loadaddr >= 0x40000000 ? 0x102000 : 0xa000;
+-
+-	fd = open(outfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+-	if (fd < 0) {
+-		perror("open outfile");
+-		exit(1);
+-	}
+-
+-	ret = write_full(fd, buf, s.st_size + addsize);
+-	if (ret < 0) {
+-		perror("write outfile");
+-		exit(1);
+-	}
+-
+-	exit(0);
+-}
+diff --git a/scripts/mxsimage.c b/scripts/mxsimage.c
+index 88e991a..0a5f6a0 100644
+--- a/scripts/mxsimage.c
++++ b/scripts/mxsimage.c
+@@ -23,9 +23,7 @@
+ #define ARRAY_SIZE(x)		(sizeof(x) / sizeof((x)[0]))
+ 
+ static char *prepfile;
+-static char *prepfile_signature;
+ static char *bootloaderfile;
+-static char *bootloaderfile_signature;
+ 
+ struct sb_boot_image_version {
+ 	uint16_t	major;
+@@ -1219,12 +1217,8 @@ static int sb_build_command_load(struct sb_image_ctx *ictx,
+ 		/* Regular LOAD of a file. */
+ 		if (!strcmp(tok, "@PREP@"))
+ 			loadfile = prepfile;
+-		else if (!strcmp(tok, "@PREP_SIG@"))
+-			loadfile = prepfile_signature;
+ 		else if (!strcmp(tok, "@BOOTLOADER@"))
+ 			loadfile = bootloaderfile;
+-		else if (!strcmp(tok, "@BOOTLOADER_SIG@"))
+-			loadfile = bootloaderfile_signature;
+ 		else
+ 			loadfile = tok;
+ 
+@@ -2519,20 +2513,14 @@ int main(int argc, char *argv[])
+ 	int opt;
+ 	char *configfile = NULL, *outfile = NULL, *verify = NULL;
+ 
+-	while ((opt = getopt(argc, argv, "p:b:c:o:v:s:t:")) != -1) {
++	while ((opt = getopt(argc, argv, "p:b:c:o:v:")) != -1) {
+ 		switch (opt) {
+ 		case 'p':
+ 			prepfile = optarg;
+                         break;
+-		case 's':
+-			prepfile_signature = optarg;
+-                        break;
+ 		case 'b':
+ 			bootloaderfile = optarg;
+ 			break;
+-		case 't':
+-			bootloaderfile_signature = optarg;
+-                        break;
+ 		case 'c':
+ 			configfile = optarg;
+ 			break;
+-- 
+2.1.4
+

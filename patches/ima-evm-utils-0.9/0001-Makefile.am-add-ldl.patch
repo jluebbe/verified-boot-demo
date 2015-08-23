@@ -1,0 +1,22 @@
+From: Jan Luebbe <jlu@pengutronix.de>
+Date: Thu, 19 Mar 2015 14:29:39 +0100
+Subject: [PATCH] Makefile.am: add -ldl
+
+Signed-off-by: Jan Luebbe <jlu@pengutronix.de>
+---
+ src/Makefile.am | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/Makefile.am b/src/Makefile.am
+index deb18fb09dc7..a129eab43310 100644
+--- a/src/Makefile.am
++++ b/src/Makefile.am
+@@ -14,7 +14,7 @@ bin_PROGRAMS = evmctl
+ evmctl_SOURCES = evmctl.c
+ evmctl_CPPFLAGS = $(OPENSSL_CFLAGS)
+ evmctl_LDFLAGS = $(LDFLAGS_READLINE)
+-evmctl_LDADD =  $(OPENSSL_LIBS) -lkeyutils libimaevm.la
++evmctl_LDADD =  $(OPENSSL_LIBS) -ldl -lkeyutils libimaevm.la
+ 
+ INCLUDES = -I$(top_srcdir) -include config.h
+ 

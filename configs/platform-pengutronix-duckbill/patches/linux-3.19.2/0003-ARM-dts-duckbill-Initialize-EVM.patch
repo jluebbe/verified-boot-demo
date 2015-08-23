@@ -1,0 +1,27 @@
+From f211ed98d50da35ea3e56a1dc271a6448ea921bf Mon Sep 17 00:00:00 2001
+From: Jan Luebbe <jlu@pengutronix.de>
+Date: Wed, 18 Mar 2015 18:09:06 +0100
+Subject: [PATCH 3/3] ARM: dts: duckbill: Initialize EVM
+
+Signed-off-by: Jan Luebbe <jlu@pengutronix.de>
+---
+ arch/arm/boot/dts/imx28-duckbill.dts | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/arch/arm/boot/dts/imx28-duckbill.dts b/arch/arm/boot/dts/imx28-duckbill.dts
+index ce1a7ef..40f0e2c 100644
+--- a/arch/arm/boot/dts/imx28-duckbill.dts
++++ b/arch/arm/boot/dts/imx28-duckbill.dts
+@@ -119,3 +119,9 @@
+ 		};
+ 	};
+ };
++
++&dcp {
++	linux,evmkey = [ 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 ];
++	linux,require-evm;
++	linux,disable-unique-key;
++};
+-- 
+2.1.4
+

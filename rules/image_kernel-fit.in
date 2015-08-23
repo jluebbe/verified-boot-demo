@@ -1,0 +1,10 @@
+## SECTION=image
+
+config IMAGE_KERNEL_FIT
+	bool
+	select DTC
+	select IMAGE_KERNEL
+	select IMAGE_ROOT_CPIO_GZ
+	select HOST_U_BOOT_TOOLS
+	prompt "Generate images/linuximage_fit"
+	help

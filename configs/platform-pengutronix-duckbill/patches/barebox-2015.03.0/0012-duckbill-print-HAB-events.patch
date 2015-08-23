@@ -1,0 +1,58 @@
+From 379b85a17c6c9954505b579c425c4f1c1ad754f7 Mon Sep 17 00:00:00 2001
+From: Jan Luebbe <jlu@pengutronix.de>
+Date: Tue, 17 Mar 2015 20:59:00 +0100
+Subject: [PATCH 12/14] duckbill: print HAB events
+
+Signed-off-by: Jan Luebbe <jlu@pengutronix.de>
+---
+ arch/arm/boards/duckbill/board.c     | 3 +++
+ arch/arm/mach-mxs/Makefile           | 1 +
+ arch/arm/mach-mxs/include/mach/hab.h | 2 ++
+ 3 files changed, 6 insertions(+)
+
+diff --git a/arch/arm/boards/duckbill/board.c b/arch/arm/boards/duckbill/board.c
+index 11255d0..2e662f9 100644
+--- a/arch/arm/boards/duckbill/board.c
++++ b/arch/arm/boards/duckbill/board.c
+@@ -24,6 +24,7 @@
+ #include <net.h>
+ 
+ #include <mach/clock.h>
++#include <mach/hab.h>
+ #include <mach/imx-regs.h>
+ #include <mach/iomux-imx28.h>
+ #include <mach/iomux.h>
+@@ -81,6 +82,8 @@ static int duckbill_console_init(void)
+ 	barebox_set_model("I2SE Duckbill");
+ 	barebox_set_hostname("duckbill");
+ 
++	get_hab_status();
++
+ 	return 0;
+ }
+ console_initcall(duckbill_console_init);
+diff --git a/arch/arm/mach-mxs/Makefile b/arch/arm/mach-mxs/Makefile
+index 8064be5..bd9976d 100644
+--- a/arch/arm/mach-mxs/Makefile
++++ b/arch/arm/mach-mxs/Makefile
+@@ -6,3 +6,4 @@ obj-$(CONFIG_MXS_OCOTP) += ocotp.o
+ obj-$(CONFIG_MXS_CMD_BCB) += bcb.o
+ pbl-y += power-init.o mem-init.o lradc-init.o
+ obj-$(CONFIG_MXS_HAB) += hab.o
++pbl-$(CONFIG_MXS_HAB) += hab.o
+diff --git a/arch/arm/mach-mxs/include/mach/hab.h b/arch/arm/mach-mxs/include/mach/hab.h
+index 3b9f3b3..8da295b 100644
+--- a/arch/arm/mach-mxs/include/mach/hab.h
++++ b/arch/arm/mach-mxs/include/mach/hab.h
+@@ -14,6 +14,8 @@
+ #ifndef __HAB_H
+ #define __HAB_H
+ 
++void get_hab_status(void);
++
+ /*
+  * Header field components
+  * @ingroup hdr
+-- 
+2.1.4
+

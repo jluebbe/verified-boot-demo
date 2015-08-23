@@ -1,0 +1,102 @@
+## SECTION=bootloader
+
+menuconfig BOOTLETS
+	tristate
+	prompt "i.mX28 bootlets               "
+	select HOST_ELFTOSB
+#	select KERNEL
+#	select U-BOOT
+#	select ZIMAGE
+	help
+	  Creates the binary boot stream required to bring up an i.MX28 CPU
+	  based target
+
+if BOOTLETS
+
+config BOOTLETS_KERNEL
+	bool
+	prompt "Kernel bootlet"
+	default y
+	help
+	  Build a kernel bootlet and create a bootstream just starting a the
+	  kernel from this BSP.
+
+config BOOTLETS_BOOTLOADER
+	bool
+	prompt "bootloader bootlet"
+	default y
+	help
+	  Build a bootloader bootlet and create a bootstream just starting the
+	  barebox bootloader from this BSP.
+
+comment "Special options"
+
+config BOOTLETS_DEBUG
+	bool
+	prompt "Noisy bootlets"
+	help
+	  Make the bootlets more noisy. This will output various debug messages
+	  at the debug port (UART1 at the Starterkit-5).
+
+config BOOTLETS_MOBILESDRAM
+	bool
+	prompt "configure for mobile SDRAM"
+	help
+	  If some kind of mobile SDRAM is in use, enable this entry. Note: The
+	  "chumby one" uses a generic DDR SDRAM.
+
+config BOOTLETS_CPU_T1
+	bool
+	prompt "Second Silicon"
+	help
+	  CPUs marked with 'TO1.1 PCIMX287CJM4A' (first silicon) need a
+	  different encryption method than the ones marked with
+	  'TO1.2 PCIMX287CJM4B' (second silicon). Say 'Y' here
+	  if you want to create a bootlet for a second silicon CPU.
+
+config BOOTLETS_ENCRYPT
+	bool
+	prompt "support encryption"
+	help
+	  Enabling this entry will encrypt the bootstream. Some i.MX28 based
+	  platforms only booting encrypted bootstream images (like the
+	  "i.MX28 EVK"). Other platforms (like the "chumby one") only booting
+	  unencrypted bootstream images.
+
+if BOOTLETS_ENCRYPT
+
+choice
+	prompt "Encryption key"
+	default BOOTLETS_ZERO_ENCRYPT
+
+config BOOTLETS_ZERO_ENCRYPT
+	bool
+	prompt "zeroed key"
+	help
+	  Enabling this entry will encrypt the bootstream content with a zerod
+	  key. Some platforms (like the "i.MX28 EVK") need this special kind
+	  of key.
+
+config BOOTLETS_KEY_ENCRYPT
+	bool
+	prompt "defined key"
+	help
+	  Enabling this entry will encrypt the bootstream content with a
+	  predefined key from a file.
+
+endchoice
+
+if BOOTLETS_KEY_ENCRYPT
+
+config BOOTLETS_KEYFILE_ENCRYPT
+	string
+	prompt "Key file"
+	help
+	  Enter here the name of the key file to use to encrypt the image.
+	  This file will be expected in the root of the BSP.
+
+endif
+
+endif
+
+endif
